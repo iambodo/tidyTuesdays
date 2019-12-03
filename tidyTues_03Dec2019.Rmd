@@ -1,0 +1,106 @@
+---
+title: "Tidy Tuesday Dec 3"
+author: "Brian O'Donnell"
+output:
+  html_document:
+    df_print: paged
+---
+
+Data source here:
+https://github.com/rfordatascience/tidytuesday/tree/master/data/2019/2019-12-03
+
+
+```{r, eval=TRUE}
+library(readr)
+tickets <- readr::read_csv("https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2019/2019-12-03/tickets.csv")
+
+# Or read in with tidytuesdayR package (https://github.com/thebioengineer/tidytuesdayR)
+# Either ISO-8601 date or year/week works!
+# Install via devtools::install_github("thebioengineer/tidytuesdayR")
+
+#tuesdata <- tidytuesdayR::tt_load("2019-12-03")
+#tuesdata <- tidytuesdayR::tt_load(2019, week = 49)
+#tickets <- tuesdata$tickets
+
+
+
+# Read in raw Data --------------------------------------------------------
+
+library(readr)
+
+small_df <- tickets %>% 
+  mutate(date = lubridate::date(issue_datetime),
+         year = lubridate::year(date),
+         hour = lubridate::hour(date),
+         day = lubridate::wday(date, label = TRUE)) %>%
+  mutate(monthend = lubridate::ceiling_date(date, unit = "month")) %>%
+  mutate(daystil = difftime(monthend, date, units="days")) %>%
+  mutate(fine=as.integer(fine))
+
+#View(small_df)  
+
+daysum1<-small_df %>%
+  group_by(day) %>%
+  summarize(fines=sum(fine))
+
+
+
+#removing weekends from analysis
+datesum<-small_df %>%
+  filter(day != "Sat" & day !="Sun") %>%
+  group_by(date) %>%
+  summarize(fines=sum(fine))
+
+#removing weekends from analysis
+daysum<-small_df %>%
+  filter(day != "Sat" & day !="Sun") %>%
+  group_by(day, daystil) %>%
+  summarize(fines=sum(fine))
+
+#days until end of week
+quota<-small_df %>%
+  group_by(daystil) %>%
+  summarize(fines=sum(fine))
+
+
+
+ggplot(quota, aes(x=daystil, y=fines)) + 
+  geom_point() +
+  geom_smooth(method=lm) +
+  xlab("Days Until End of Month") +
+  ylab("Total Fines") +
+  ggtitle("Philadelphia Parking Violations, 2017", subtitle="By days until end of month.") +
+  labs(caption="For TidyTuesday:03Dec2019")
+
+```
+
+
+Unused code below
+```{r unused code, eval=FALSE}
+library(DataExplorer)
+
+plot_bar(small_df$issuing_agency)
+#boxplot(fines ~ daystil, data=quota, main="days until end of month")
+
+ggplot(small_df) +
+  geom_bar(mapping=aes(x=violation_desc), stat="count")
+
+library(xts)
+datesum_ts<-xts(x=cbind(fines=datesum$fines), order.by=datesum$date)
+
+library(dygraphs)
+dygraphs::dygraph(datesum_ts, main = "All Fines") %>%
+  dySeries("fines", label ="Total fines in USD") %>%
+  dyRangeSelector(height=20)
+
+  # removing date/year as duplicative
+  # removing state as all PA
+  # gps as filtering only lat/long present
+  # division is > 60% missing
+  # location as a very large amount of metadata without as much use
+  
+small_df %>% filter(is.na(zip_code))
+
+```
+
+.
