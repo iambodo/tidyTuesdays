@@ -1,0 +1,809 @@
+---
+title: "West Wing"
+output:
+  rmarkdown::html_document:
+    code_folding: hide
+    highlight: espresso
+    theme: lumen
+---
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE)
+```
+
+
+
+```{r packages, message=FALSE, warning=FALSE, results='hide'}
+####Load required packages
+packages<-c("dplyr","jsonlite","stringr","lubridate","httr","assertthat","readr","stats","graphics","utils","base", "janeaustenr","tidytext", "rvest","tidyr", "gender","XML","gridExtra","DT")
+
+install_or_load_pack <- function(pack){
+  create.pkg <- pack[!(pack %in% installed.packages()[, "Package"])]
+  if (length(create.pkg))
+    install.packages(create.pkg, dependencies = TRUE, repos="http://lib.stat.cmu.edu/R/CRAN")
+  sapply(pack, require, character.only = TRUE)
+}
+
+install_or_load_pack(packages)
+
+```
+
+If you're nostalgically watching The West Wing in quarantine, [you're not alone.](https://www.nytimes.com/2019/12/29/us/politics/west-wing-politics.html).The show excelled at humanizing Washington, as filled with whip-smart young people striving to make their country a better place. Episodes from 20 years ago make great comfort TV for this era.
+
+But our longing is for a fictional world. There are serious arguments that the show not only presents a distorted vision of our politics, but has encouraged a generation of idealistic young people--from Iowa to [Myanmar](https://www.newyorker.com/culture/culture-desk/the-west-wing-dream-of-democracy)--to emulate a consensus-driven, technocratic professionalism that never existed in Washington. It was first step in their disullisonment with our political process. Worse, the show may have heightened our faith that strong personalities to solve complex problems through sheer force of will--thus contributing to our present populism.
+
+All of which leads to me thinking on my sofa in April 2020, watching the President suggest injecting disenfectant, thinking: what would Bartlett do?
+
+Bartlett would study the science. He would know the numbers.
+
+Or would he?
+
+# Statistics and West Wing
+
+One thing that always struck me about the West Wing was the characters' love of numbers. The Bartlett admin seemed to represent an "data-driven" culture, beloved of corporations and public agencies alike.
+
+Statistics in dialogue is definitely a common ["Sorkinism"](https://youtu.be/S78RzZr3IwI). Take  Will McAvoy's rant from _The Newsroom_.
+
+<iframe width="560" height="315" src="https://www.youtube.com/embed/wTjMqda19wk" frameborder="0" allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+
+And Ainsley and Sam's banter on small businesses.
+
+<iframe width="560" height="315" src="https://www.youtube.com/embed/MD9YJARRY04?start=36" frameborder="0" allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+
+
+From a dramatic perspective, the scene signals the Ainsley's erudition and passion. That said, the choice and framing of those statistics is relatively selective. As the saying goes, "People use statistics the way a drunk uses a lamp post — for support, not illumination." While invoking statistics may suggest an objective truth, their superficial appearance in the West Wing's dramatic moments promote specific wordviews and agenda. And so this show may also have sown mistrust of statistical argument in general, and contributed to misunderstanding of how statistics are developed and used in policy circles: 
+
+>"The declining authority of statistics – and the experts who analyse them – is at the heart of the crisis that has become known as [“post-truth” politics"](https://www.theguardian.com/politics/2017/jan/19/crisis-of-statistics-big-data-democracy) - The Guardian"
+
+Or, to paraphrase [Joey Lucas](https://www.youtube.com/watch?v=t7FJFuuvxpI), "numbers lie all the time". Since people see the West Wing as a parallel of real life, I'm interested in who uses numbers in this universe, and why.
+
+_I suspect that Sorkin's characters use statistics frequently throughout the West Wing._ My **hunch** is that the most frequent quoters of statistics would be main characters making decisions in the Bartlett White House--and, as I'll argue below--are more likely to be men.
+
+
+### Background for the Wonks
+I've wanted to do this analysis since policy school five years ago, but only recently have I found the skills to learn R packages like [tidytext](https://tidytextmining.com), httr, and ggraph to try it--there are so many good packages and resources these days, it was far quicker than expected. On Googling I found [another analysis](https://medium.com/@jeremy.sklarsky/lies-damn-lies-and-west-wing-statistics-9473219434a9) of the same data that takes other itneresting topics like setting, lines per character, and line length per character. Worth checking out!
+
+
+Now, if only there was some way to easily access all West Wing scripts?
+
+
+
+```{r data share, echo=FALSE,fig.show='hold',fig.align='center'}
+
+#the internet
+knitr::include_graphics("https://media.giphy.com/media/KUXHDkT8PMPjG/giphy.gif")
+```
+
+
+
+# ACT ONE: The Scraping and Cleaning
+
+Below is the loop I used for webscraping from [WestWingTranscripts.com](http://www.westwingtranscripts.com/), a handy site with plain text summaries and scripts for the West wing. Unfortunately, huge good portions of seasons 4-6 are missing, including most of Season 5. So take this with a grain of salt. I would have liked to isolate the dialogue better -- right now, the scraper looks for the speaking characters name in all caps, then assigns all rows non-null rows beneath it to the speaking character, until the next line. It may pick up some "action line" or "speak into phone" etc. Its not perfect, but thats why its a hobby :D
+
+
+It will also remove common English "stop words" like "and" and "what". We are left with a "tidy" dataframe of **300,293 words**, by character and episode.
+
+If you want to check out the code, you can unfold it below or at the top of the doucument.
+
+
+
+
+```{r webscrape function, eval=FALSE}
+
+library(readr)
+library(stopwords)
+#loop through all 148 episodes
+
+baseurl1<-c("http://www.westwingtranscripts.com/")
+baseurl1_search<-paste0(baseurl1, "search.php?flag=getTranscript&id=")
+#stopwords - we want to keep numbers 1-10 in the text
+onetoten<-c("one","two","three","four","five","six","seven","eight","nine","ten")
+stop_words_new<-stop_words %>% 
+  filter(!word %in% onetoten)
+
+
+#throttled because I abused their server :(
+for (i in (1:148)){
+
+#DEBUG
+#print(i)
+  
+#Specifying the url for desired website to be scraped
+url <- paste0(baseurl1_search,i)
+
+
+#Reading the HTML code from the website
+webpage <- read_html(url)
+
+#isolate part of webpage with text
+script_data_html <- html_nodes(webpage,"blockquote")
+script_data_html <-html_text(script_data_html, "pre")
+raw_text<-tibble("text"=read_lines(script_data_html[2]))
+
+
+#remove punctuation / empty lines, and titles
+
+cleaned_text<- raw_text %>% 
+  filter(text!="") %>% 
+  mutate(text = str_replace_all(text, "\\[.+?\\]", "")) %>% 
+  mutate(text = str_replace_all(text, "DR", "")) %>% 
+  #MRS LANDINGHAM messing up this op! Argh!
+  mutate(text = str_replace_all(text, "MRS. LANDINGHAM", "MRSLANDINGHAM")) %>% 
+  mutate("linenumber"= row_number(),
+         "dialogue"= if_else(text != toupper(text) & nchar(text) > 1, "TRUE","FALSE"),
+         "first_word" =  str_remove(word(text, start = 1), "[//.]") ,
+         "char_id" =  str_extract(first_word, regex("[A-Z]+", ignore_case = FALSE)),
+         "char_id_length" = nchar(char_id)) %>% 
+  mutate("character"= if_else(char_id_length>1, char_id, "x")) %>%
+  mutate(character = na_if(character, "x")) %>% 
+  tidyr::fill(character, .direction = "down") %>% 
+  filter(dialogue==TRUE) %>% 
+  filter(!character %in% c("CUT","FADE","THE")) %>% 
+  select(linenumber, character, text)
+
+
+#tokenize script and remove stopwords
+episode_words <- cleaned_text %>%
+  unnest_tokens(word, text) %>%
+  filter(str_detect(word, "\\w+"),
+         !word %in% stop_words_new$word) %>% 
+  mutate("episode"=i)
+
+if(i==1){
+  
+  series_words<-tibble()
+  
+}
+
+
+series_words <- bind_rows(series_words, episode_words) 
+
+}
+
+
+series_words <- series_words %>% 
+  filter(!is.na(character))
+
+#I have to save the data separately because it looks like my IP was throttled by the server and this operation wont reproduce, blubbbb
+#save(series_words, file = "series_words.RData")
+
+```
+
+Now I categorize words as statistics or not. The stop words havent eliminated "1-10", but I also label words like "dozen","quarter", and "million" and statistics related.
+
+```{r analysis -- quick plot}
+
+#Load data from earlier chunk
+load("series_words.RData")
+baseurl1<-c("http://www.westwingtranscripts.com/")
+baseurl1_search<-paste0(baseurl1, "search.php?flag=getTranscript&id=")
+
+
+series_words <- series_words %>% 
+  filter(!is.na(character))
+
+#now check which ones are numbers
+
+num_words1<-c("dozen", "thousand","hundred",
+              "million", "percent", "percentage",
+              "statistic","quarter","tenth","third","fifth")
+num_words2<-str_c(num_words1,"s")
+num_words<-c(num_words1,num_words2)
+  
+#show over time
+ep_nums <-series_words %>% 
+  mutate("is_number"=if_else((str_detect(word, "^[0-9]*$")) | 
+                              (word %in% num_words), 1, 0)) %>% 
+  group_by(episode) %>% 
+  summarize("total"=n(),
+            "stat_count"=sum(is_number),
+            "perc_nums"= round(((stat_count/total)*100), 2)) %>% 
+  filter(total > 100)
+
+
+
+library(ggplot2)
+#plot it
+ggplot(data=ep_nums, aes(x=episode, y=perc_nums)) +
+  geom_point() +
+# Add regression line
+ geom_smooth(method = "loess") +
+  theme_minimal()
+
+
+```
+
+
+We have initial results! There is an association between episode number and statistics--slightly parabolic, no?
+
+
+Now to get a glimpse at the characters
+
+```{r top words per character}
+
+#see most common words per character
+freqs <- series_words %>% 
+  group_by(character) %>% 
+  mutate("total"=n()) %>% 
+  filter(total > 200) %>% 
+  count(word) %>% 
+  arrange(character, desc(n)) %>% 
+  mutate(rank = row_number()) %>% 
+  filter(rank <= 10)
+
+
+freqs %>%  arrange(character) %>% DT::datatable()
+
+
+```
+
+Here you can see the top words for each character, overall. Poor charlie said the word sir 403 times during the entire WW run :(
+
+
+```{r }
+nums<-series_words %>% 
+  mutate("is_number"=if_else((str_detect(word, "^[0-9]*$")) | 
+                              (word %in% num_words), 1, 0)) %>% 
+  group_by(character) %>% 
+  summarize("total"=n(),
+            "number_count"=sum(is_number),
+            "perc_nums"= round(((number_count/total)*100), 2)) %>% 
+  #only show top 50 characters
+  arrange(desc(total)) %>% 
+  head(100) %>% 
+  arrange(desc(perc_nums))
+
+nums %>% DT::datatable()
+
+
+```
+
+Now we have an interesting use of statistics use by character. We already see that some minor characters with few lines dropped statistics a lot (Cathy? Had to look her up...) A few characters with >1000 spoken words jump out -- Fitzwallace, the army chief, and Joey.
+
+One other trend I'd like to see is how use words changed over the seasons, so for that I'll need to categorize the episode ID's by season--this is in a separate table, but we can recreate it in R.
+
+
+```{r get episode list}
+
+#Specifying the url for desired website to be scraped
+baseurl2<-c("http://www.westwingepguide.com/")
+url <- paste0(baseurl2,"list.html")
+
+library(XML)
+#Reading the HTML table from the website
+eps_tbl<-readHTMLTable(url, which=1, stringsAsFactors=FALSE)
+
+#first get the links to episode summaries
+links<-unlist(getHTMLLinks(url)) %>% 
+  tibble() %>%
+  slice(-1) %>% 
+  select("urls"=everything()) %>% 
+  mutate("summary"=paste0(baseurl1,urls))
+
+#links
+
+#then format the HTML table and merge with the episode links
+eps_tbl2<-as_tibble(eps_tbl) %>% 
+  slice(-1, -2) %>% 
+  select("ep_id"=V1, "season_list"=V2, "airdate"=V4, "title"=V5) %>%
+  mutate("ep_id"=as.integer(ep_id)) %>% 
+  mutate("airdate"=as.Date(airdate, "%m-%d-%y")) %>% 
+  mutate("season"=substring(as.character(season_list), 1, 1)) %>% 
+  filter(!is.na(title)) %>% 
+  bind_cols(links) %>% 
+  mutate(title=str_replace_all(title, "Â", "")) %>% 
+  mutate("summary_url"=paste0("<a href=\"",baseurl1,"search.php?flag=getSummary&id=",
+                              ep_id, "\">","Summary","</a>"))%>%
+  mutate("script_url"=paste0("<a href=\"",baseurl1_search, ep_id,"\">","Script","</a>")) %>% 
+  select(ep_id, season, season_list, airdate, title, summary_url, script_url)
+
+
+#datatable
+DT::datatable(eps_tbl2, rownames = FALSE, escape = FALSE)
+
+```
+
+
+We'll merge the above info with the numbers by episode.
+
+```{r merge with text analysis}
+
+eps_tbl3 <- eps_tbl2 %>% 
+  left_join(ep_nums, by = c("ep_id"="episode"))
+
+library(ggplot2)
+a1<-ggplot(data=eps_tbl3, aes(x=airdate, y=perc_nums)) +
+  geom_line(aes(color=season)) +
+  geom_point(aes(color=season))
+
+time_summary<-eps_tbl3 %>% 
+    filter(!is.na(perc_nums)) %>% 
+    mutate("year"=year(airdate)) %>% 
+    mutate("month"=month(airdate)) %>% 
+    mutate("yearmonth"=floor_date(airdate, unit="month")) 
+
+monthly_summary <- time_summary %>% 
+    group_by(season, yearmonth) %>% 
+    summarise("percent_numbers"=mean(perc_nums))
+
+season_summary <- time_summary %>% 
+    group_by(season) %>% 
+    summarise("percent_numbers"=mean(perc_nums))
+
+annual_summary <- time_summary %>% 
+    group_by(year) %>% 
+    summarise("percent_numbers"=mean(perc_nums))
+
+
+#over time
+a2<-ggplot(data=monthly_summary, aes(x=yearmonth, y=percent_numbers)) +
+  geom_line(aes(color=season)) +
+  geom_point(aes(color=season))
+
+#season graph
+b1<-ggplot(data=season_summary, aes(x=season, y=percent_numbers)) +
+  geom_col(aes(fill=season))
+
+#year graph
+b2<-ggplot(data=annual_summary, aes(x=year, y=percent_numbers)) +
+  geom_col()
+
+library(gridExtra)
+grid.arrange(a1, a2, b1, b2, nrow = 2)
+
+```
+
+
+These words peaked in 2002 and Season 4, which was also Sorkin's last season on the show--just as his style was hitting its stride.
+
+But theres another Sorkin trope worth exploring--and it might be related. Many _West wing_ criticisms single out the show's [treatment of female characters.](https://www.theguardian.com/commentisfree/2012/jul/02/aaron-sorkin-the-newsroom-sexism)
+
+If statistics are used in the West Wing universe to justify existing power structures, then maybe women are less frequently using numbers in their dialogue, and are more likely to be hearing the men speak them. I mean, in the "Newsroom" clip above, the male newscaster sends back a young female college student's question with 16 uninterrupted seconds of statistics.
+
+# Act Two: Gender
+
+For this we'll use the "gender" and "genderdata" packages, which predict's the gender of a character's name based on historical data from the social security administration. Here's the head, and results from the merge above.
+
+
+```{r gender}
+library(gender)
+library(dplyr)
+library(tidyr)
+
+#nums<-tibble("character"=c("sally","harry"))
+
+#this method asks us to pick a minimum and max birthyear
+gendered_names<-nums %>% 
+  mutate(min_year=1950) %>% 
+  mutate(max_year=1990) %>% 
+  gender_df(method="ssa", name_col="character",
+            year_col=c("min_year","max_year"))
+
+
+head(gendered_names)
+#genderize(x, genderDB, blacklist = NULL, progress = TRUE)
+
+
+#unknown to male
+unknown_g <-nums %>% 
+    filter(!character %in% gendered_names$name)
+
+#inspect
+#View(unknown_g)
+
+u_to_m <-unknown_g %>% mutate(gender="Male")
+
+#male to female
+m_to_f<-c("WOMAN", "MRSLANDINGHAM", "JORDAN", "JOEY","CJ","ANDY","HARPER","WOMAN","MRSLANDINGHAM")
+    
+new_char_genders <- gendered_names %>% 
+  select(name, gender) %>% 
+  full_join(nums, by=c("name"="character")) %>% 
+  mutate(gender = if_else((name %in% u_to_m$character), "male", gender),
+         gender =  if_else((name %in% m_to_f), "female", gender),
+         gender =  if_else(name %in% c("PILOT","REPORTER",
+                                                 "TV","ANNOUNCER","AGENT","DR","TRANSLATOR",
+                                                 "CONGRESSMAN"),"unknown", gender))
+
+#View(new_char_genders)
+
+```
+
+
+Here's another Sorkin approach to writing female characters: to make your female character more relatable to you, the writer, give her a male name! Andy, Joey, CJ, Harper... all girls-with-boy-names. 
+
+This, I did not expect.
+
+Overall I replaced 7 males by hand to girl names, over 15 to boy names that were unknown, and 2 girls that were unknown. 8 remain unknown names. This experience taught me that genderizing names automatically can come with risks -- at an individual level, historical trends aren't a great predictor of gender.
+
+```{r}
+gender_summary<-new_char_genders %>% 
+  group_by(gender) %>% 
+  summarize("characters"=n(),
+            "stat_sum"=sum(number_count),
+            "total_words"=sum(total),
+          "gender_perc_nums"=round((stat_sum/total_words), 5))
+
+gender_summary
+```
+
+
+HOWEVER, from this exercise we can see that men do on average talk in statistics-related terms than women.
+
+```{r, echo=FALSE,fig.show='hold',fig.align='center'}
+knitr::include_graphics("https://media0.giphy.com/media/1bE4SMD7sUCas/source.gif")
+```
+
+But with that done--how do words change in West Wing by speaker gender? Let's plot the frequencies of words for male and female against each other. Also, take a look at the 100 words with a noticeable gender difference.
+
+
+```{r gender abline}
+genders<-new_char_genders %>% 
+    select(name,gender)
+
+
+gender_freqs<-series_words %>% 
+  mutate(upper_word=toupper(word)) %>% 
+  anti_join(series_words, by=c("upper_word"="character")) %>% 
+  inner_join(genders, by=c("character"="name")) %>% 
+  mutate(word = str_extract(word, "[a-z']+")) %>%
+  count(gender, word) %>%
+  filter(gender!="unknown" & nchar(word)>1) %>% 
+  group_by(gender) %>%
+  mutate(proportion = n / sum(n)) %>% 
+  select(-n) %>% 
+  spread(gender, proportion)
+
+library(scales)
+p<-ggplot(gender_freqs, aes(x = female, y = male, color = abs(male - female))) +
+  geom_abline(color = "gray40", lty = 2) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  scale_color_gradient(limits = c(0, 0.001), low = "darkslategray4", high = "black") +
+  theme(legend.position="none") +
+  labs(y = "Male", x = "Female", title = "West Wing word frequency by Gender")
+
+q<-gender_freqs %>% 
+  mutate(diff=abs(female-male)) %>% 
+  arrange(desc(diff)) %>% 
+  head(100) %>% 
+  mutate("weight"=if_else(female<male, "male","female")) %>% 
+  DT::datatable()
+
+p
+q
+```
+
+What do we see here?
+
+Men in the series dominate swearing, war, and money--the men tend to say "taxes" 3 times as often as women. Women stand out for words more often associated with office tasks, such as"desk","bring","walking". Also, the president's daughter, Zoey, is probably the only one to use the term "dad" frequently. 
+
+This reflects the division of labor within the Bartlett white house, and the types of dialogue characters receive from that. When it comes to the nuts and bolts of policymaking, they are often men.
+
+
+```{r combine with stats words}
+
+gender_words <-series_words %>% 
+  mutate("is_number"=if_else((str_detect(word, "^[0-9]*$")) | 
+                              (word %in% num_words), 1, 0)) %>% 
+  group_by(character, episode) %>% 
+  summarize("total_char_ep_words"=n(),
+            "number_count"=sum(is_number),
+            "perc_nums_char_ep"= round(((number_count/total_char_ep_words)*100), 2)) %>% 
+  ungroup() %>% 
+  inner_join(genders, by =c("character"="name")) %>% 
+  left_join(eps_tbl3, by=c("episode"="ep_id"))
+
+
+gender_eps <- gender_words %>% 
+  group_by(episode, gender) %>% 
+  summarize("total"=sum(total_char_ep_words),
+            "number_count"=sum(number_count),
+          "per_nums_by_gender"=round(((number_count/total)*100), 2))
+
+gender_seasons <- gender_words %>% 
+  group_by(season, gender) %>% 
+  summarize("total"=sum(total_char_ep_words),
+            "number_count"=sum(number_count),
+          "per_nums_by_gender"=round(((number_count/total)*100), 2))
+
+
+
+g1<-gender_eps %>% 
+  filter(gender!="unknown") %>% 
+  #filter(episode!=70) %>%
+  #filter(episode<125) %>% 
+  ggplot(aes(x=episode, y=per_nums_by_gender, color = gender)) +
+  geom_point()+
+  geom_smooth(method = "loess") +
+  theme_minimal()
+
+
+
+g2<-ggplot(gender_seasons, aes(fill=gender, y=per_nums_by_gender, x=season)) + 
+    geom_bar(position="dodge", stat="identity")
+
+g1
+g2
+
+```
+
+But when it comes to numeric dialogue, it looks like Sorkin reached close to gender parity in numeric dialogue by season 4, possibly through introduction of the numbers-heavy pollster, Joey Lucas. After Sorkin left, women tended to use numbers *more often than the men*
+
+Strangely enough, the characters with unknown gender usually speak far more numbers. That could be because they are reporters, pilots, translators (Joey's translator?)... extras who are "setting the scene", and numbers help them for defining the show's universe. So they use numbers differently than characters with identifiable genders.
+
+
+*Fun sidebar!* I did in depth investigative research on the outlier in [Episode 70](https://www.dailymotion.com/video/x5spdee), so you don't have to: CJ banters with Josh about Title IX and women;s sports, which also features Donna informing Josh about the lineup at a Rock the Vote concert, where CJ gets on stage and drops stats the youth vote and credit card debt. "How many of you want kids?" and a room full of 24 year olds cheer for some reason? Whatever, the scene also features the Barenaked Ladies. It was a different era.
+
+```{r, echo=FALSE,fig.show='hold',fig.align='center'}
+knitr::include_graphics("https://i.makeagif.com/media/5-03-2016/DxkmyM.gif")
+```
+
+
+Here's what that moment looks like in the word list.
+
+```{r}
+line_in_question<-series_words %>% 
+  filter(episode==70 & word == "liberties")
+
+
+ladies<-series_words %>% 
+  filter(episode==70 & character == "BARENACKED")
+
+series_words %>% 
+filter(episode==70 & 
+         linenumber > line_in_question$linenumber - 10 &
+         linenumber < line_in_question$linenumber + 10) %>%
+  select("CJ_SPEECH"=word) %>% 
+  as.list()
+
+ladies %>% select("BARENAKED LADIES"=word) %>%  as.list()
+
+```
+
+
+
+When we look more granularly at the top characters by total words in the series, we see that CJ and Josh said far more substantive words in later seasons. Of the season 4-6 characters, Santos and Vinick rarely spoke statistics, but Will spoke plenty, capably replacing Sam Seaborn as nerd-in-chief.
+
+
+```{r top characters - stat use}
+
+top_chars<-nums %>% 
+  filter(character!="MAN") %>% 
+  arrange(desc(total)) %>% 
+  head(16) %>% 
+  select(character)
+
+
+top1<-gender_words %>% 
+  filter(character %in% top_chars$character) %>% 
+  mutate(character=as.factor(character)) %>% 
+  ggplot(aes(x=episode, y=perc_nums_char_ep, color = gender))+ 
+  geom_line()+
+  ylim(0,15)+
+  facet_wrap(~character, nrow=4)+
+  labs(title="West Wing characters with most spoken words",
+       subtitle="% words that were stats-related, by episode",
+       y="% of character's words in ep")+
+  theme(legend.position = "bottom")
+
+
+top2<-gender_words %>% 
+  filter(character %in% top_chars$character) %>% 
+  mutate(character=as.factor(character)) %>% 
+  ggplot(aes(x=episode, y=total_char_ep_words, color = gender))+ 
+  geom_line()+
+  facet_wrap(~character, nrow=4)+
+  labs(title="West Wing characters with most spoken words",
+       subtitle="Total words by episode",
+       y="Total words")+
+  theme(legend.position = "bottom")
+
+grid.arrange(top1,top2, nrow = 1)
+```
+
+
+# Act Three: Character Networks and Document Frequency
+
+But maybe there are other ways to categorize the characters. Maybe there are "stat-heads" communities who talk together, and some that dont.
+
+The next series shows networks by characters who reference each other in dialogue. Remember, this may also include stage notes (e.g. _Donna walks with Josh down the hallway..._)
+
+I made two charts. One shows the characters by gender, the other with their rankings by use of statistics (categorical low-medium-high... when we use continuous scale, Joey is in a class of her own). "Degree" refers to the number of characters connected, and the width of the lines is the number of times characters "mention" each other. We here only show characters with a combined 20+ "mentions" of each other.
+
+```{r networks}
+#DT::datatable(eps_tbl2, escape=FALSE)
+
+mentions<- series_words %>% 
+  filter(character %in% nums$character) %>% 
+  filter(word %in% tolower(nums$character)) %>% 
+  #for simplicity just getting the gendered names
+  left_join(genders, by = c("character"="name")) %>%
+  rename("name_gender"=gender) %>% 
+  mutate(word_upper=toupper(word)) %>% 
+  left_join(genders, by = c("word_upper"="name")) %>% 
+  rename("gender_word"=gender) %>% 
+  #neither word nor character can have unknown gender or identity
+  filter(gender_word!="unknown" & name_gender!="unknown") %>% 
+  filter(!word_upper %in% c("WOMAN", "MAN", "PRESIDENT")) %>% 
+  filter(!character %in% c("woman", "man", "president")) %>% 
+  #now also remove spoken instances of themselves
+  filter(word_upper!=character) %>% 
+  group_by(character, word_upper, name_gender, gender_word) %>% 
+  summarise("total_mentions"=n()) %>% 
+  ungroup() %>% 
+  filter(total_mentions>=20)
+
+#get gender -- character speaking
+mentions_g<-mentions %>% 
+  select(character, name_gender) %>% 
+  distinct()
+
+#get gender -- character referred to
+#join them in one list of genders
+mentions_g2<-mentions %>% 
+  select("character"= word_upper, "name_gender"=gender_word) %>% 
+  distinct() %>%
+  bind_rows(mentions_g) %>% 
+  distinct()
+
+
+library(tidygraph)
+graph <- as_tbl_graph(mentions, directed = FALSE) %>% 
+  activate(nodes) %>% 
+  #remove tal and landigham as they appear to be outliers
+  filter(name!="MRSLANDINGHAM" & name!="TAL") %>% 
+  mutate(degree = centrality_degree())
+  
+
+graph2<-graph %>% 
+  activate(nodes) %>% 
+  as_tibble() %>% 
+  left_join(mentions_g2, by=c("name"="character")) %>% 
+  left_join(nums, by=c("name"="character")) %>% 
+  mutate(perc_nums_class=as.factor(ntile(perc_nums, 3))) %>% 
+  mutate(statistics_dialogue=recode(perc_nums_class, `1` = "Low", `2` = "Medium", `3` = "High"))
+
+
+graph3<-graph %>% 
+  activate(edges) %>% 
+  as_tibble() 
+
+graph4<-tbl_graph(nodes=graph2, edges=graph3)
+
+
+library(ggraph)
+net1<-ggraph(graph4, layout = 'kk') + 
+      geom_edge_link0(color = "gray", aes(width = log(total_mentions))) +
+      scale_edge_width(range = c(0.1, 1)) +
+        geom_node_point(aes(size = degree, colour = statistics_dialogue)) +
+        geom_node_text(aes(label = name, size = log(degree)), repel=TRUE) +
+  labs(title="West Wing characters by dialogue connections + stat-talk")
+
+net2<-ggraph(graph4, layout = 'kk') + 
+      geom_edge_link0(color = "gray", aes(width = log(total_mentions))) +
+      scale_edge_width(range = c(0.1, 1)) +
+        geom_node_point(aes(size = degree, colour = name_gender)) +
+        geom_node_text(aes(label = name, size = log(degree)), repel=TRUE)+
+    labs(title="West Wing characters by dialogue connections + gender")
+  
+
+net1
+net2
+```
+
+We can see that the central network is mostly men, except CJ and Donna; however, the core characters generally have roughly the same level of statistics-speak, except CJ and Sam, who are at [opposite ends of math love](https://www.youtube.com/watch?v=zhhEb5SG8AQ)
+
+
+Finally, which words would we use to describe each season of _West Wing_?
+
+To answer this we can use tf-idf from **tidytext** package to do just that, borrowing liberally from the [TidyText book](https://www.tidytextmining.com/tfidf.html#the-bind_tf_idf-function)
+
+>The idea of tf-idf is to find the important words for the content of each document by decreasing the weight for commonly used words and increasing the weight for words that are not used very much in a collection or corpus of documents...
+
+In this case, the document is a season, and the collection is the series. Each word is what makes the season most unique relative to other seasons.
+
+To make this interesting, we'll remove character names.
+
+```{r most imp words per season, height=16}
+
+book_words <- series_words %>%
+  mutate(upper_word=toupper(word)) %>% 
+  anti_join(series_words, by=c("upper_word"="character")) %>% 
+  filter(upper_word!= "LANDINGHAM") %>% 
+  left_join(eps_tbl2, by = c("episode"="ep_id")) %>%
+  select(season, word) %>% 
+  group_by(season, word) %>% 
+  summarize(n=n()) %>%
+  ungroup()
+
+book_words <- book_words %>%
+  bind_tf_idf(word, season, n)
+
+
+bw<-book_words %>%
+  arrange(desc(tf_idf)) %>%
+  mutate(word = factor(word, levels = rev(unique(word)))) %>% 
+  group_by(season) %>% 
+  top_n(10) %>% 
+  ungroup() %>%
+  ggplot(aes(word, tf_idf, fill = season)) +
+  geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "West Wing tf-idf, by Season") +
+  facet_wrap(~season, ncol = 2, scales = "free") +
+  coord_flip()
+
+bw
+```
+
+I recognize some but not all of these... CJ's Jackal in Season 1, Amy's advocacy against gender-based violence in season 3, the story arc on the Palestinian conflict in seasons 5 and 6.
+
+If you wanted to see who a true fan was, you could select one of the words in this chart at random, and ask them to place it in the right season.
+
+
+OK, that was a lot...
+
+Time for pie.
+
+```{r pie, echo=FALSE,fig.show='hold',fig.align='center'}
+#i need pie
+knitr::include_graphics("https://media.giphy.com/media/9c6tOa5hGeUQU/giphy.gif")
+```
+
+
+
+```{r combined table-scatter, eval=FALSE}
+
+#some other interactive code which didnt make any sense!
+
+
+chars<-str_to_lower(unique(series_words$character))
+chars2<-c("yeah", "c.j","sir","walks")
+
+
+#all words that show up at least 100 times in WW
+#remove character names and "yeah"
+test<-series_words %>% 
+  filter(!word %in% chars2) %>%
+  filter(!word %in% chars) %>% 
+  group_by(episode, word) %>% 
+  mutate(all_chars = paste0(unique(character), collapse = ",")) %>%
+  mutate(word_count_ep =  n_distinct(linenumber)) %>% 
+  ungroup() %>% 
+  group_by(word) %>% 
+  mutate(word_count_series =  n_distinct(linenumber)) %>% 
+  select(everything(), -character, -linenumber) %>% 
+  distinct() %>% 
+  arrange(desc(word_count_series)) %>% 
+  distinct(word, word_count_series, episode, word_count_ep, all_chars) %>% 
+  filter(word_count_series >= 150)
+
+
+eps_tbl_join<-eps_tbl2 %>% select(ep_id, season)
+
+test2<-test %>% 
+  left_join(eps_tbl_join, by = c("episode"="ep_id"))
+
+
+library(d3scatter)
+
+library(crosstalk)
+
+
+
+shared_iris <- SharedData$new(test2)
+bscols(
+ d3scatter(shared_iris, ~episode, ~word_count_ep, ~season, width="100%", height=300),
+  DT::datatable(shared_iris)
+)
+
+
+library(plotly)
+m <- highlight_key(test2)
+p <- ggplot(m, aes(episode, word_count_ep)) + geom_point(aes(color=season))
+gg <- highlight(ggplotly(p), "plotly_selected")
+crosstalk::bscols(gg, DT::datatable(m))
+
+
+```
