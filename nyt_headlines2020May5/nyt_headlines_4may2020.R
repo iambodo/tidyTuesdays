@@ -45,6 +45,7 @@ View(head(nyt_fp2))
 
 library(lubridate)
 #just the headlines and dates
+#select the print headline headline.print_headline
 headlines<-nyt_fp2 %>% select(headline.main, pub_date) %>% 
   mutate(date=lubridate::ymd(as.Date(pub_date))) %>% 
   mutate(month=lubridate::month(date,label=TRUE)) %>% 
@@ -106,17 +107,25 @@ top_words_monthly<-top_words_monthly %>%
 #   labs(title="NYT Headlines last 5 months") +
 #   theme(legend.position = "bottom")
 
+#made my own color scale courtesy colourcafe
+colorscale<- c("0 mentions in April" = "#F8C060", 
+               "0 mentions in December" = "#18745C", 
+               "April and December mentions" = "#39505C")
+
 
 top_words_monthly %>% 
   ggplot(aes(x=month, y=n,  fill=`Old News?`))+ 
   geom_col()+
   facet_wrap(~word_n, nrow=6) +
   theme_minimal() +
-  labs(title="nytimes.com Headlines, December 2019 - April 2020",
+  scale_fill_manual(values = colorscale) +
+  labs(title="nytimes.com Front Page Headlines, December 2019 - April 2020",
        subtitle="Monthly word count of top 24 words in web edition headlines, page A1 stories",
        caption = "Source: developer.nytimes.com") +
   ylab("count") +
-  theme(legend.direction = "horizontal",
+  scale_y_continuous(breaks = seq(0, 50, by=25), limits=c(0,50)) +
+  theme(plot.background = element_rect(fill="#F3EFE7"),
+        legend.direction = "horizontal",
         legend.title.align = 0,
         legend.position = "bottom",
         legend.key.size =  unit(.5, "cm"),
