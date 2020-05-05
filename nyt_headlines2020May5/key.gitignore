@@ -1,0 +1,15 @@
+# Created by https://www.gitignore.io/api/text
+# Edit at https://www.gitignore.io/?templates=text
+
+### Text ###
+*.doc
+*.docx
+*.log
+*.msg
+*.pages
+*.rtf
+*.txt
+*.wpd
+*.wps
+
+# End of https://www.gitignore.io/api/text
