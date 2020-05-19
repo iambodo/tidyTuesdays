@@ -1,8 +1,12 @@
+#load data
+
 library(readr)
 vb_matches <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-05-19/vb_matches.csv', guess_max = 76000)
 #View(vb_matches)
 library(tidyverse)
 
+
+#explore!
 vb_matches %>% group_by(w_p1_country) %>% select(w_p1_country) %>% summarise(n=n()) %>% arrange(desc(n))
 
 # vb_matches %>% 
@@ -76,6 +80,7 @@ chart_data_avg<-chart_data %>%
 
 chart_data_avg  
 
+#esquisse to set up the plot!
 # install.packages("esquisse")
 # library(esquisse)
 # esquisse::esquisser()
@@ -93,24 +98,26 @@ coolchart<-ggplot(chart_data_avg) +
  scale_size_continuous(range = c(1,10), 
                        breaks = c(1000, 10000, 100000, 2000000),
                        labels = c("< 1,000", "> 1,000", "> 100,000", "> 2,000,000")) +
- labs(x = "Errors", 
+ labs(x = "Serve Errors", 
       y = "Aces", 
-      title = "On Target", 
-      subtitle = "Aces and Errors per thousands of points played, by player country",
+      title = "Everythin's Comin' Up Aces?", 
+      subtitle = "Aces and Serve Errors per thousand points played, by player country",
       caption = "FIVB and AVP matches, 2000-2019",
       color = "Gender", size = "Total points played") +
   geom_text(data=subset(chart_data_avg, errors_per_thousand > 40 | aces_per_thousand > 23), 
-            aes(label=country, color = gender), size =3, hjust = 1, nudge_y = -0.5, show.legend = FALSE) +
+            aes(label=country, color = gender), size =4, hjust = 1, nudge_y = -0.5, show.legend = FALSE) +
+  geom_text(data=subset(chart_data_avg, errors_per_thousand < 20 & aces_per_thousand > 15), 
+            aes(label=country, color = gender), size =4, hjust = 1, nudge_y = -0.5, show.legend = FALSE) +
   geom_text(data=subset(chart_data_avg, errors_per_thousand < 10 | aces_per_thousand == 0), 
-            aes(label=country, color = gender), size =3, hjust = 0, nudge_y = 1, show.legend = FALSE) +
+            aes(label=country, color = gender), size =4, hjust = 0, nudge_y = 1, show.legend = FALSE) +
   geom_text(data=subset(chart_data_avg, country == "Brazil"), 
-            aes(label=country, color = gender), size =3, hjust = 1, nudge_y = -0.5, show.legend=FALSE) +
+            aes(label=country, color = gender), size =4, hjust = 1, nudge_y = -1, show.legend=FALSE) +
   geom_text(data=subset(chart_data_avg, country == "United States"), 
-            aes(label="USA", color = gender), size =3, hjust = 1, nudge_y = -1, nudge_x = -0.5, show.legend = FALSE) +
+            aes(label="USA", color = gender), size =4, hjust = 1, nudge_y = -2, nudge_x = -1, show.legend = FALSE, check_overlap = TRUE) +
   geom_text(data=subset(chart_data_avg, country == "Average" & gender=='Women'),
-             aes(label="Women's Average"), color = "green", size =2, hjust = 0, nudge_y = 1, show.legend = FALSE) +  
+             aes(label="Women's Average"), color = "green", size =3, hjust = 0, nudge_y = 1, show.legend = FALSE) +  
   geom_text(data=subset(chart_data_avg, country == "Average" & gender=='Men'),
-            aes(label="Men's Average"), color = "green", size =2, hjust = 0.7, nudge_y = 1, show.legend = FALSE) +  
+            aes(label="Men's Average"), color = "green", size =3, hjust = 0.7, nudge_y = 1, show.legend = FALSE) +  
   geom_point(data=subset(chart_data_avg, country == "Average"), pch = 21, fill = "green", size =4, show.legend = FALSE) +  
   geom_point(data=subset(chart_data_avg, country == "Average"), pch = 21, fill = "green", size =4, show.legend = FALSE) +  
  theme_dark() +
@@ -127,17 +134,18 @@ coolchart<-ggplot(chart_data_avg) +
        axis.ticks = element_line(color="white"),
        axis.text = element_text(color="white"),
        legend.background = element_rect(fill="black"),
-       legend.text = element_text(color="white", size = 10),
-       legend.title = element_text(color="white", size = 14),
-       legend.key = element_rect(fill="black"))
-  
+       legend.text = element_text(color="white", size = 15),
+       legend.title = element_text(color="white", size = 16),
+       legend.key = element_rect(fill="black"),
+       legend.box =  "vertical",
+       legend.margin = margin())
+
+#showchart!  
 coolchart
-install.packages("gfonts")
-library(gfonts)       
 
-use_pkg_gfont("baloo", selector = ".example-baloo")
+#install.packages("showtext")
 
-
+#Add cool font!
 library(showtext)
 font_add_google(name = "Rock Salt", family = "Rock Salt") 
 showtext_auto()
