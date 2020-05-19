@@ -91,7 +91,7 @@ library(ggplot2)
 #update_geom_defaults("text", list(colour = "white"))
 
 library(scales)
-coolchart<-ggplot(chart_data_avg) +
+coolchart<-ggplot(chart_data) +
  aes(x = errors_per_thousand, y = aces_per_thousand) +
  geom_point(aes(fill=gender,  size = sum_points), colour="grey",pch=21) +
  scale_color_manual(values=c("#0bd3d3", "#f890e7"), aesthetics=c("colour","fill")) +
@@ -118,8 +118,8 @@ coolchart<-ggplot(chart_data_avg) +
              aes(label="Women's Average"), color = "green", size =3, hjust = 0, nudge_y = 1, show.legend = FALSE) +  
   geom_text(data=subset(chart_data_avg, country == "Average" & gender=='Men'),
             aes(label="Men's Average"), color = "green", size =3, hjust = 0.7, nudge_y = 1, show.legend = FALSE) +  
-  geom_point(data=subset(chart_data_avg, country == "Average"), pch = 21, fill = "green", size =4, show.legend = FALSE) +  
-  geom_point(data=subset(chart_data_avg, country == "Average"), pch = 21, fill = "green", size =4, show.legend = FALSE) +  
+  geom_point(data=subset(chart_data_avg, country == "Average"), pch = 24, fill = "green", size =1, show.legend = FALSE) +  
+  geom_point(data=subset(chart_data_avg, country == "Average"), pch = 24, fill = "green", size =, show.legend = FALSE) +  
  theme_dark() +
  theme(legend.position = "bottom",
        title = element_text(family="Rock Salt"),
