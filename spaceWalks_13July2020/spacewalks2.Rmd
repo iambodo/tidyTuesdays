@@ -1,0 +1,271 @@
+---
+title: "Spacewalks TT"
+author: "Brian O'Donnell"
+date: "7/14/2020"
+output: html_document
+---
+  
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(tidyverse)
+library(tidytuesdayR)
+library(ggraph)
+library(tidygraph)
+
+
+```
+
+## Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+d<-tt_load("2020-07-14")
+astro<-d$astronauts
+
+#astro %>% head
+
+test<-astro %>% 
+  group_by(mission_title) %>% 
+  select(mission_title, name) %>% 
+  na.omit()
+
+
+edges<-test %>% 
+  left_join(test, by=c("mission_title"), suffix=c("_1","_2")) %>% 
+  distinct() %>% 
+  filter(name_1!=name_2) %>% 
+  select(name_1, name_2, mission_title)
+
+edges
+
+astro %>% 
+  count(nationality, sort=TRUE) %>% View
+
+nodes<-astro %>% 
+  group_by(name) %>% 
+  mutate(firstmission=min(year_of_mission)) %>% 
+  ungroup() %>% 
+  distinct(name, .keep_all=T) %>% 
+  select(name, nationality, 
+         sex, total_number_of_missions, firstmission) %>% 
+  na.omit()
+
+
+g<-tbl_graph(nodes=nodes, edges=edges, directed=FALSE) %>% 
+  activate(nodes) %>% 
+  mutate(country=if_else(
+    nationality %in% c("U.S.S.R/Russia", "U.S."), nationality, "Other" 
+  )) %>% 
+  mutate(country=case_when(
+    country=="U.S.S.R/Russia" ~ "USSR & Russia",
+    country=="U.S." ~ "USA",
+    TRUE ~ country
+  )) %>% 
+  mutate(country=factor(country,levels=c("USSR & Russia", "USA", "Other")))
+
+
+
+
+net<-g %>% 
+  mutate(community = as.factor(group_infomap())) %>% 
+  activate(edges) %>%
+  filter(!edge_is_multiple())
+
+
+
+net_central <- net %>% 
+  activate(nodes) %>% 
+  mutate(centrality = centrality_authority()) %>%   
+  mutate(neighbors = centrality_degree()) %>%
+  mutate(btw = centrality_betweenness(normalized = TRUE)) %>% 
+  arrange(-centrality) %>% 
+  mutate(strekalov_degrees = node_distance_to(nodes = c(1))) %>%  
+  mutate(degrees=if_else(is.infinite(strekalov_degrees),
+                         8.99, strekalov_degrees))
+
+
+
+
+library(ggtext)
+overlay<-net_central %>% 
+  ggraph(layout = 'nicely') + 
+  geom_edge_link0(alpha=0.2, color="white") +
+  scale_alpha_continuous(range=c(0.4, 1), guide = FALSE) + 
+  geom_node_point(aes(filter=centrality > .999),
+                  color="#D1DE36",
+                  stroke=1,
+                  shape=18,
+                  size=4) +
+  geom_node_point(aes(color=country, alpha=((9-degrees)/9)),  
+                  show.legend = TRUE) +
+  # labs(title="8 Degrees of Gennadi Strekalov",
+  #      subtitle="Network of Astronauts and Cosmonauts by Joint Missions, 1969-2019") +
+  theme_graph(base_family="sans",
+              background="#020930",
+              text_colour = "white") +
+  theme(legend.position="bottom")
+
+
+overlay
+
+annotated<-overlay +
+  scale_color_manual(
+    values = c(`USSR & Russia` = "#ba1e68", USA = "#5643fd", Other = "#008080"),
+    labels = c(
+      `USSR & Russia`  = "<i style='color:#ba1e68'>USSR & Russia</i>",
+      USA = "<i style='color:#5643fd'>USA</i>",
+      Other = "<i style='color:#008080'>Other</i>")
+  ) +
+  labs(
+    title = "8 degrees of <span style='color:#D1DE36;'>Gennadi Strekalov</span><br><span style='font-size:11pt'> *Network of Astronauts and Cosmonauts by Joint Missions, 1969-2019*</span>" ) +
+  theme(plot.title = ggtext::element_markdown(lineheight = 1.1),
+    plot.subtitle = ggtext::element_markdown(lineheight = 1.1),
+    legend.text = ggtext::element_markdown(size = 11)) +
+  annotate("text", size=3, x=20, y=23, label="___Unconnected Missions___",
+         color="violet", alpha=0.4, angle=-20) +
+  annotate("text", size=2, x=6, y=11, label="Strekalov",
+         color="#D1DE36", alpha=0.4, angle=0)
+  
+
+annotated
+
+ggsave("global_network.svg")
+
+```
+
+```{r}
+
+
+net4<-net %>% 
+  activate(nodes) %>% 
+  mutate(decade=case_when(
+    firstmission > 1960 & firstmission <= 1970 ~ "1960-69",
+    firstmission > 1970 & firstmission <= 1980 ~ "1970-79",
+    firstmission > 1980 & firstmission <= 1990 ~ "1980-89",
+    firstmission > 1990 & firstmission <= 2000 ~ "1990-99",
+    firstmission > 2000 & firstmission <= 2010 ~ "2000-09",
+    firstmission > 2010 & firstmission < 2021 ~  "2010-20"
+  )) %>% 
+  ggraph(layout = 'nicely') + 
+  geom_edge_link0(color="grey90") +
+  geom_node_point(aes(color=country),  
+                  show.legend = TRUE) +
+  facet_wrap(~decade, ncol=3)+
+    theme_graph(base_family="sans",
+              background="#020930",
+              text_colour = "white")+
+    theme(legend.position = "none") +
+  labs(title="By Decade of Each Astronaut's First Mission",
+       subtitle="<span style='color:#5643fd;'> **US** </span>and <span style='color:#ba1e68;'>**Russian** </span> astronauts grew more closely connected over time") +
+    theme(plot.title = ggtext::element_markdown(lineheight = 1.1),
+         plot.subtitle = ggtext::element_markdown(lineheight = 1.1))+
+    scale_color_manual(
+    values = c(`USSR & Russia` = "#ba1e68", USA = "#5643fd", Other = "#008080"),
+    labels = c(
+      `USSR & Russia`  = "<i style='color:#ba1e68'>USSR & Russia</i>",
+      USA = "<i style='color:#5643fd'>USA</i>",
+      Other = "<i style='color:#008080'>Other</i>")
+  )
+
+net4
+
+ggsave("decade_network.svg")
+
+```
+
+
+
+
+```{r}
+library(magick)
+
+gennadi<-image_read("gennadi.jpg")
+
+gennadi
+gennadi %>% 
+image_convert(type = 'Grayscale')
+
+canny<-image_convert(gennadi, type="Grayscale") %>% 
+  image_canny("1x2+15%+19%") %>% 
+  image_fill("#020930") %>% 
+  image_crop(geometry_area(300, 240))
+
+canny
+
+```
+
+
+```{r}
+histdata<-net_central  %>% 
+  as_tibble() %>% 
+  filter(strekalov_degrees!=0) %>% 
+  mutate(degrees=if_else(is.infinite(strekalov_degrees),
+                                    0, 1))
+
+#What's the percent?
+histdata %>% 
+  count(strekalov_degrees) %>% 
+  mutate(perc=n/sum(n))
+
+#histogram of strekalov connections
+hist<-histdata %>% 
+  mutate(strekalov_degrees=if_else(is.infinite(strekalov_degrees),
+                         -1, strekalov_degrees)) %>% 
+  group_by(strekalov_degrees, country) %>% 
+  summarise(n=n()) %>% 
+  ggplot() +
+  geom_col(aes(x=strekalov_degrees, y=n, fill=country), 
+           position=position_stack())+
+    annotate("rect", xmin=0.2, xmax=4.51, ymin= -5, ymax=220, size=2, alpha=0.2, fill="#D1DE36") +
+  scale_fill_manual(
+    values = c(`USSR & Russia` = "#ba1e68", USA = "#5643fd", Other = "#008080"),
+    labels = c(
+      `USSR & Russia`  = "<i style='color:#ba1e68'>USSR & Russia</i>",
+      USA = "<i style='color:#5643fd'>USA</i>",
+      Other = "<i style='color:#008080'>Other</i>")
+  ) +
+  theme_linedraw()+
+  theme(legend.position = "null",
+    text = element_text(color="white"),
+    axis.text = element_text(color="white"),
+    plot.background=element_rect(fill="#020930"),
+    panel.background=element_rect(fill="#020930"),
+    axis.line = element_line(color="white")) +
+  scale_x_continuous(breaks=c(-1, 1, 3, 5, 7),
+                     labels=c("Not Connected", 1, 3, 5, 7)) +
+  labs(y="Astronauts",x="Degrees removed from Gennadi Strekalov") +
+  annotate("text", x = 1.3, y = 150, color="white",
+           label = str_wrap("85% of asronauts within 4 degrees", 20)) +
+    annotate("text", x = 7, y = 100, color="#D1DE36",
+           label = str_wrap("Years Active: 1980-1995", 30))+
+      annotate("text", x = 7, y = 80, color="#D1DE36",
+           label = str_wrap("Total Missions: 5", 30))+
+        annotate("text", x = 7, y = 60, color="#D1DE36",
+           label = str_wrap("Mission Hours: 6454 ", 30)) +
+          annotate("text", x = 7, y = 220, color="#D1DE36",
+           label = str_wrap("Gennadi Strekalov", 30))
+
+
+
+ggsave("hist.svg")
+
+hist_img<-image_read("hist.svg")
+
+hist_final <-image_composite(image_scale(hist_img, "x700"), canny, offset = "+460+80")
+
+```
+
+
+```{r}
+global_img<-image_read("global_network.svg")
+facet_img<-image_read("decade_network.svg")
+
+top<-c(global_img, hist_final)
+top<-image_append(image_scale(top, "x700"))
+
+```
+
+
