@@ -1,0 +1,330 @@
+---
+title: "TidyTemplate"
+date: 2020-10-19
+output: html_output
+---
+
+# TidyTuesday
+
+Join the R4DS Online Learning Community in the weekly #TidyTuesday event!
+Every week we post a raw dataset, a chart or article related to that dataset, and ask you to explore the data.
+While the dataset will be “tamed”, it will not always be tidy! As such you might need to apply various R for Data Science techniques to wrangle the data into a true tidy format.
+The goal of TidyTuesday is to apply your R skills, get feedback, explore other’s work, and connect with the greater #RStats community!
+As such we encourage everyone of all skills to participate!
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+#install.packages("usmap")
+# install.packages("tidygeocoder")
+
+library(tidygeocoder)
+library(tidyverse)
+library(tidytuesdayR)
+library(usmap)
+```
+
+# Load the weekly Data
+
+Dowload the weekly data and make available in the `tt` object.
+
+```{r Load}
+
+tt <- tt_load("2020-10-20")
+beer_awards <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-10-20/beer_awards.csv')
+
+```
+
+
+# Readme
+
+Take a look at the readme for the weekly data to get insight on the dataset.
+This includes a data dictionary, source, and a link to an article on the data.
+
+```{r Readme, eval = interactive()}
+
+tt
+
+```
+
+
+# Glimpse Data
+
+Take an initial look at the format of the data available.
+
+```{r Glimpse}
+
+beer_awards %>% group_by(category, year) %>% count(sort=T) %>% filter(n<2)
+
+beer_awards %>% 
+  count(category, sort=T)
+  
+beer_awards %>% 
+  filter(str_detect(city, "Louisville"))
+```
+
+# Wrangle
+
+Explore the data and process it into a nice format for plotting! Access each dataset by name by using a dollarsign after the `tt` object and then the name of the data set.
+
+```{r Wrangle}
+
+#separate pale ales and others
+
+
+##create the data
+data <- beer_awards %>% 
+  mutate(IPA=if_else(str_detect(category, "Pale Ale|Blonde|Golden"), 
+                     "All Pale Ales, Blondes, & IPAs", "Other Beers")) %>% 
+  filter(!state %in% c("AK","HI")) %>% 
+  mutate(city=str_replace(city, "\\((.*)\\)", "")) %>% #take out parentheses 
+  mutate(city=str_replace(city, ".*/", "")) %>%  #slashes
+  mutate(city=str_replace(city, "E2=80=8E", "")) 
+
+
+# geocode the cities
+lat_longs <- beer_awards %>%
+  select(city, state) %>% 
+  distinct() %>% #just get distinct cities to save geocoding API
+  mutate(centroid=F) %>% 
+  geocode(state=state, city=city, country="USA", 
+          method = 'osm', lat = latitude , long = longitude) 
+
+#filter out those that are missing and do centroid
+lat_longs_missed<-lat_longs %>% 
+  filter(is.na(latitude)) %>%
+  select(-starts_with("l")) %>% 
+  mutate(centroid=T) %>% 
+  geocode(state=state, country="USA",
+          method = 'osm', lat = latitude , long = longitude)
+
+lat_longs<-lat_longs %>% 
+  filter(!is.na(latitude)) %>% 
+  bind_rows(lat_longs_missed)
+
+
+#now merge back with data
+
+map_data_raw <- data %>% 
+  left_join(lat_longs, by=c("city","state")) %>% 
+  filter(longitude< -50 & latitude<55)
+
+map_data<- map_data_raw %>% 
+  add_count(city, state, IPA) %>% #count by city state year
+  ungroup() %>% 
+  filter(centroid==F)
+
+map_data
+
+beer_awards %>% 
+  filter(str_detect(category, "Golden")) %>% distinct(category) %>% print()
+  
+```
+
+
+
+         
+```{r calculate clusters}
+# install.packages("dbscan")
+library(dbscan)
+
+EPS <- 1
+clusters <- dbscan(select(map_data, latitude, longitude), minPts=5, eps = EPS)
+map_data$cluster <- clusters$cluster
+
+#groups vs noise
+map_data<-map_data %>% 
+  add_count(cluster, name="csize", sort = TRUE)
+groups  <- map_data %>% filter(cluster != 0 & csize >= 10)
+noise  <- map_data %>% filter(cluster == 0 | csize < 10)
+
+
+top_cluster_cities<-map_data %>% 
+  select(city, state, IPA, latitude, 
+         longitude, year, n, cluster, csize) %>% 
+  ungroup() %>% 
+  group_by(cluster) %>% 
+  mutate(max_n=max(n),
+         max_city=if_else(n==max_n, str_c(city, ", ",state), "")) %>% 
+  filter(max_city!="") %>% 
+  ungroup() %>% 
+  select(cluster, max_n, max_city) %>% distinct()
+  
+
+top_cluster_cities
+
+
+top_cluster_IPA<-map_data %>% 
+  ungroup() %>% 
+  distinct(city, state, .keep_all=T) %>% #distinct cities
+  group_by(cluster, IPA) %>%  #group by cluster and IPA level
+  summarize(cluster_IPA_size=sum(n)) %>%  #total up all medals at cluster IPA
+  select(cluster, IPA, cluster_IPA_size) %>% 
+  ungroup() %>% 
+  group_by(IPA) %>% 
+  slice_max(order_by = cluster_IPA_size, n=5) %>% 
+  left_join(top_cluster_cities, by="cluster")
+
+top_cluster_IPA
+
+
+```
+
+
+```{r map clusters}
+## Get colors for the map
+
+library(randomcoloR)
+# set.seed(127)
+cols<-unique(groups$cluster)
+colscale<-randomColor(count = length(cols), luminosity = c("bright"))
+
+colscale <- setNames(colscale, cols)
+
+
+library(ragg)
+library(systemfonts)
+
+
+
+mapfacet<-ggplot(map_data, aes(longitude, latitude)) + 
+  borders("state", colour="grey60", fill="grey30") +
+  geom_point(aes(fill = "black", size=n), shape=1, alpha=0.5, noise) +
+  geom_point(aes(colour = as.factor(cluster), size=n), fill=NA, shape=1, groups) +
+  # ggrepel::geom_label_repel(aes(label=city_total, colour=as.factor(cluster)),
+  #            size=2, top_cities) +
+  # geom_label(aes(label=city_total, colour=as.factor(cluster)),
+  #            size=2, top_cities) +
+  scale_size_continuous(range=c(1, 12)) +
+  scale_color_manual(values=colscale) +
+  facet_wrap(~IPA, ncol=1) +
+  coord_map() +
+  theme_void() +
+  labs(title="Medals By Brewery Location and Beer Type, Colored by Cluster") +
+  theme(legend.position = "none", 
+          strip.text = element_text(color="white",  family="Candara", face="bold", size=14),
+          plot.title=element_text(color="white", family="Candara", face="bold", hjust=0.5, size=14, margin=margin(0,5,0,0)),
+          panel.border = element_blank(),
+          plot.background = element_rect(color=NA, fill = "#3c3c3c"),
+          panel.background = element_rect(color=NA, fill = "#3c3c3c"))
+
+mapfacet
+
+
+```
+
+
+```{r add in bar chart}
+
+library(ggthemes)
+# clustercols<-as_tibble(stack(colscale)) %>% 
+#   mutate(across(is.factor, as.integer))
+#   
+# 
+# maptexts<-top_cities %>% 
+#   left_join(clustercols, by=c("cluster"="ind"))
+
+rightbars<-ggplot(top_cluster_IPA) +
+    geom_col(aes(x=reorder(max_city, cluster_IPA_size), 
+                       y=cluster_IPA_size, 
+                       fill=as.factor(cluster))) +
+    scale_fill_manual(values=colscale) +
+    coord_flip() +
+    theme_clean() +
+    facet_wrap(~IPA, ncol=1, scales="free") +
+    labs(x="",y="Medals in Cluster",
+         title="Medals by Cluster Top City and Beer Type") +
+    theme(legend.position = "none",
+          plot.title =element_text(color="white", family="Candara", face="bold", size=14, hjust = 0.5, margin=margin(0,5,0,0)),
+          panel.border = element_blank(),
+          axis.text=element_text(color="white",  family="Candara", face="bold", size=12),
+          axis.title =element_text(color="white",  family="Candara",face="bold", size=14),
+          strip.text = element_text(color="white",  family="Candara", face="bold", size=14),
+          strip.background = element_rect(fill = "#3c3c3c"),
+          plot.background = element_rect(fill = "#3c3c3c", color=NA),
+          panel.background = element_rect(fill = "#3c3c3c", color=NA))
+
+  
+rightbars
+
+library(patchwork)
+mapfacet + rightbars
+
+
+
+
+```
+
+```{r plot it out}
+
+library(ggtext)
+
+bottom<-(mapfacet + rightbars) +  plot_layout(ncol = 2, widths = c(7,4))
+
+library(ragg)
+#install.packages("systemfonts")
+library(systemfonts)
+
+
+mytheme<-theme(
+      plot.title = element_markdown(size = 22, 
+                          hjust=0.5,
+                          family="Candara",
+                          fill= "#3c3c3c",
+                          margin=margin(3,0,4,0),
+                          color="white",
+                          face = "bold"),
+      plot.subtitle = element_markdown(
+                          size=16,
+                          family="Candara",
+                          hjust=0.5,
+                          face="bold",
+                          color="white",
+                          fill="#3c3c3c",
+                          lineheight = 1),
+      plot.caption = element_markdown(
+                          size=12,
+                          family="Candara",
+                          hjust=0.5,
+                          face="bold",
+                          color="white",
+                          fill="#3c3c3c",
+                          lineheight = 1),
+      panel.background=element_rect(fill = "#3c3c3c", color=NA),
+      plot.background = element_rect(fill = "#3c3c3c", color=NA))
+
+
+final<-bottom +
+  plot_annotation(
+    title="*Where's The Hops?* Regionality of Great American Beer Festival Awards, 1987-2020",
+    subtitle="The annual competition has awarded 4,970 medals to 1,859 breweries. When locating those breweries by city, <br> clusters emerge around Southern California, the Pacific Northwest, the Atlantic North East, Colorado, and Chicago/Milwaukee. <br> But the *tastiest* and *hoppiest* beers often found along the California coast!",
+    caption = "Locations are geocoded with OSM and clustered by {dbscan} package. Black circles could not be clustered. <br> Excludes 79 medals from Alaska and Hawaii, and 24 medals in lower 48 that could not be geocoded. <br> City circles sized from 1 medal to 129 medals (in Denver). <br>Data: GABF - Design: @1ambodo",
+    theme=mytheme)
+    
+
+library(patchwork)
+
+final
+
+#for captions
+# beer_awards %>% filter(state %in% c("AK","HI"))
+# 
+# map_data_raw %>% filter(centroid==T)
+# 
+# map_data %>% filter(n==max(n))
+
+```
+
+```{r finish}
+
+
+#Finish!
+agg_png("p.png", width = 1200, height = 700, units = 'px')
+final
+dev.off()
+
+
+```
+
+
