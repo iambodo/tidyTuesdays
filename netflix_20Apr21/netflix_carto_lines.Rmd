@@ -1,0 +1,195 @@
+---
+title: "netflix_20Apr21"
+output: html_document
+---
+
+```{r prep, message=FALSE}
+## packages
+library(tidyverse)   ## data science package collection (incl. the ggplot2 package)
+library(systemfonts) ## use custom fonts (need to be installed on your OS)  
+library(scico)       ## scico color palettes(http://www.fabiocrameri.ch/colourmaps.php) in R 
+
+ # install.packages("scico")
+#install.packages("ggdist")
+ 
+library(ggtext)      ## add improved text rendering to ggplot2
+library(ggforce)     ## add missing functionality to ggplot2
+library(ggdist)      ## add uncertainity visualizations to ggplot2
+library(magick)      ## load images into R
+# install.packages("patchwork")
+# install.packages("rcartocolor")
+# install.packages("tidytuesdayR")
+library(tidytuesdayR)
+library(lubridate)
+library(patchwork)   ## combine outputs from ggplot2
+# install.packages("countrycode")
+library(countrycode)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+
+tt<-tidytuesdayR::tt_load(Sys.Date()-1)
+
+tt$netflix_titles %>% 
+  mutate(year_added=ymd(date_added)) %>% select(year_added)
+
+
+netflix<-tt$netflix_titles %>% 
+  mutate(yr=as.integer(str_sub(date_added, -4))) %>% 
+  filter(yr<2021) %>% 
+  separate_rows(country, sep=", ") %>% 
+  mutate(country=stringr::str_remove_all(country,",")) %>% 
+  mutate(region=countrycode::countryname(country, destination = 'continent')) %>%
+  # mutate(region=if_else(country=="United States", country, region)) %>% 
+  group_by(region, yr) %>% 
+  summarise(total=n()) %>% 
+  complete(yr=seq.int(from=2010,to=2020, by=1)) %>% 
+  mutate(total=if_else(is.na(total),as.integer(0),total)) %>% 
+  na.omit()
+ 
+
+
+netflix %>% 
+  ggplot(aes(x=yr, y=total, color=region)) +
+  geom_line()
+
+
+top_countries<-tt$netflix_titles %>% 
+  mutate(yr=as.integer(str_sub(date_added, -4))) %>% 
+  filter(yr>2014) %>% 
+  separate_rows(country, sep=", ") %>% 
+    mutate(country=stringr::str_remove_all(country,",")) %>% 
+
+    # count(show_id) %>% ## what percent are multinational
+    # mutate(multi=if_else(n>1, "Yes", "No")) %>% 
+    # count(multi, name="total_collabs") %>% 
+    # summarise(percent_multi=total_collabs/sum(total_collabs))
+  
+    mutate(code=countrycode::countryname(country, destination = 'iso3c')) %>%
+    count(country,code, name="total") %>% na.omit() %>% arrange(desc(total))
+
+top_countries
+
+
+
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+# install.packages("maptools")
+# install.packages("cartogram")
+# install.packages("rgeos")
+library(sf)
+library(rgeos)
+# install.packages("rgdal")
+library(rgdal)
+# Get the shape file of Africa
+library(maptools)
+library(cartogram)
+data(wrld_simpl)
+
+# install.packages("ggthemes")
+library(ggthemes)
+
+
+wrld_simpl<-sf::st_as_sf(wrld_simpl)
+wrld_simpl<-wrld_simpl[wrld_simpl$NAME!="ANTARCTICA", ]
+
+netmap<-sp::merge(wrld_simpl, top_countries, 
+                  by.x="ISO3",by.y="code", duplicateGeoms=TRUE) %>% 
+    st_transform(world_map, crs = "+proj=robin")
+
+
+# construct a cartogram using netflix count
+netflix_cartogram <- cartogram_cont(netmap, "total", itermax=5)
+ 
+# This is a new geospatial object, we can visualise it!
+# plot(netflix_cartogram)
+
+plot(st_geometry(netflix_cartogram["total"]))
+
+carto<-ggplot(data = netflix_cartogram["total"]) + 
+  geom_sf(colour="red", fill="black") +
+  theme_map() +
+  coord_sf(expand = FALSE) +
+  theme(plot.background = element_rect(fill="black"),
+        panel.background = element_rect(fill="black"))
+
+carto
+```
+
+```{r}
+
+
+##just a line for USA-only
+netflix_USA<-tt$netflix_titles %>% 
+  mutate(yr=as.integer(str_sub(date_added, -4))) %>% 
+  filter(yr<2021 & yr > 2012) %>% 
+  filter(country=="United States") %>% 
+  count(yr,name="total")
+
+#color palette
+netcols<-c("#5e75cd",
+           "#fc77b9",
+           "#11ff00",
+           "#e5b99a",
+           "#04b8fc")
+
+net_trends<-ggplot() +
+  geom_line(data= netflix %>% filter(yr>2012),
+            aes(x=yr, y=total, color=region)) +
+  geom_line(data=netflix_USA, aes(x=yr, y=total), color="grey50", linetype=2) +
+  geom_text(data=netflix %>% filter(yr==2020) %>%
+              mutate(total=case_when(region=="Asia" ~ as.integer(total+50),
+                                     region=="Europe" ~ as.integer(total-50),
+                                      region=="Africa" ~ as.integer(total+30),
+                                     TRUE ~ as.integer(total))),
+            aes(x=yr, y=total, label=region, color=region),nudge_x = 0.5) +
+  annotate("text", x=2020, y=790,
+           # label=str_wrap("Produced in USA only", 15), 
+            label="Produced in USA only", fontface = 'italic', 
+           color="grey90", size=2) +
+  annotate("text", label=str_wrap("Production Credits by Region and Year Added to Netflix", 25),
+           fontface= 'italic', color="white", x=2015, y=800,
+           size=3) +
+  coord_cartesian(expand = c(3, 0),clip = 'off') +
+  theme_minimal() +
+  scale_color_manual(values=netcols) +
+  theme(legend.position = "none",
+        text=element_text(color="white"),
+        axis.text=element_text(color="white"),
+        plot.background = element_rect(fill="black"),
+        panel.background = element_rect(fill="black"),
+        panel.grid = element_line(colour = "grey10"),
+               plot.margin = margin(0,0,0,0)) +
+  labs(x="",y="Credits")
+
+
+  
+library(patchwork)
+
+final <-carto / net_trends +
+  plot_layout(ncol = 1, heights = c(2, 1)) +
+  plot_annotation(title="ARE YOU STILL WATCHING, WORLD?",
+                           subtitle="Netflix Films & Shows by Country of Production, 2013-2020",
+                           caption = "Country area distorted to relative count of production credits. \n Includes 1150 international coproductions (15% of total) which are counted once per country.",
+                           theme = theme(plot.background = element_rect(fill="black"),
+                                  text=element_text(color="white"),
+                                  plot.title = element_text(hjust = 0.5, face="bold"),
+                                  plot.subtitle = element_text(hjust=0.5)))
+
+final
+
+ggsave("netflix.png")
+```
+
+
