@@ -1,0 +1,285 @@
+---
+title: "TidyTemplate"
+date: 2021-05-11
+output: html_output
+editor_options: 
+  chunk_output_type: console
+---
+
+# TidyTuesday
+
+Join the R4DS Online Learning Community in the weekly #TidyTuesday event!
+Every week we post a raw dataset, a chart or article related to that dataset, and ask you to explore the data.
+While the dataset will be “tamed”, it will not always be tidy! As such you might need to apply various R for Data Science techniques to wrangle the data into a true tidy format.
+The goal of TidyTuesday is to apply your R skills, get feedback, explore other’s work, and connect with the greater #RStats community!
+As such we encourage everyone of all skills to participate!
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(tidytuesdayR)
+# install.packages("zipcodeR")
+library(zipcodeR)
+# devtools::install_github("laresbernardo/lares")
+
+```
+
+# Load the weekly Data
+
+Dowload the weekly data and make available in the `tt` object.
+
+```{r Load}
+
+tt <- tt_load("2021-05-11")
+tt$broadband %>% 
+  head()
+tt
+```
+
+
+# Readme
+
+Take a look at the readme for the weekly data to get insight on the dataset.
+This includes a data dictionary, source, and a link to an article on the data.
+
+```{r Readme, eval = interactive()}
+
+wifi<-tt$broadband %>% 
+  janitor::clean_names() %>% 
+  mutate("countycode"=as.double(county_id))
+
+#from countyhealthrankings 
+#https://www.countyhealthrankings.org/explore-health-rankings
+
+url<-"https://www.countyhealthrankings.org/sites/default/files/media/document/analytic_data2021.csv"
+lifeExp_names<-read_csv(url, n_max=1) 
+
+
+lifeExp<-read_csv(url, skip = 2, 
+                  col_names=colnames(lifeExp_names)) %>% 
+        janitor::clean_names() %>% 
+        filter(county_fips_code!="000") %>% 
+        select(name,contains("state"),contains("fips"),contains("raw"))
+
+
+
+lifeExp %>% head()
+
+wifi
+  
+```
+
+
+# Glimpse Data
+
+Take an initial look at the format of the data available.
+
+```{r Glimpse}
+
+wifi_life<-lifeExp %>% 
+  # select(state, county, statecode, countycode, "life_exp_2019"=v147_rawvalue, "hs_2019"=v168_rawvalue) %>% 
+  # mutate(statecounty=as.double(paste0(state_fips_code,county_fips_code))) %>% 
+  mutate("countycode"=as.double(x5_digit_fips_code) ) %>% 
+  left_join(wifi, by=c("countycode")) %>% 
+  mutate(across(contains("broadband"), as.double))
+
+
+wifi_life
+  
+wifi_life %>% 
+  # mutate(life_exp_2019=round(life_exp_2019, 2)) %>% 
+  # select(-contains("usage")) %>% 
+  # drop_na() %>%
+  ggplot(aes(y=flu_vaccinations_raw_value, x=broadband_usage)) +
+  geom_jitter(alpha=0.3) +
+  # ylim(0,0.004) +
+  geom_smooth(method="loess") +
+  theme_minimal()
+
+  
+
+
+```
+
+# Wrangle
+
+Explore the data and process it into a nice format for plotting! Access each dataset by name by using a dollarsign after the `tt` object and then the name of the data set.
+
+```{r Wrangle}
+
+colnames(wifi_life)
+
+wifi_life %>% 
+  filter(flu_vaccinations_raw_value<0.4 & broadband_usage>0.73)
+
+wifi_life %>% 
+  slice_max(flu_vaccinations_raw_value, n=1)
+
+```
+
+
+# Visualize
+
+Using your processed dataset, create your unique visualization.
+
+```{r Visualize}
+library(lares)
+
+wifi_corrs<-wifi_life
+  select(county_id, broadband_usage,median_household_income_raw_value,
+         percent_rural_raw_value, insufficient_sleep_raw_value) 
+  # select(county_id, broadband_usage, !contains("percent"))
+
+corr_var(wifi_corrs, # name of dataset
+  broadband_usage, # name of variable to focus on
+  method="pearson"
+  # top = 5,   # method = "pearson" # display top 5 correlations
+) 
+
+test<-wifi_life %>% select(broadband_usage, insufficient_sleep_raw_value) %>% drop_na()
+
+
+
+
+```
+
+
+```{r}
+
+wifi_nest<-wifi_life %>% 
+  select(state_abbreviation, county_name, county_id, broadband_usage, 
+         premature_death_raw_value, where(is.numeric)) %>%
+  mutate(county_id=as.character(county_id)) %>% 
+  pivot_longer(cols=premature_death_raw_value:last_col(),
+               names_to="ind",
+               values_to="ind_value") %>% 
+  mutate(ind=str_remove_all(ind, "_raw_value")) %>% 
+  group_by(ind) %>% 
+  nest()
+
+
+corr_fun<-function(df) suppressMessages(cor.test(df$broadband_usage, df$ind_value, method = "spearman"))  %>% broom::tidy()
+
+wifi_nest
+
+wifi_nest <- mutate(wifi_nest, model = map(data, corr_fun))
+
+wifi_results<-wifi_nest %>% 
+  unnest(model)
+
+wifi_results %>% 
+  filter(p.value>0.01)
+
+
+wifi_bars<-wifi_results %>% 
+  ungroup() %>% 
+  select(-data) %>% 
+  # slice_max(abs(estimate), n = 30) %>%
+  mutate(signif = case_when(p.value < 0.0001 ~ "***", 
+                            p.value < 0.001 ~ "**",
+                            p.value < 0.01 ~ "*",
+                            TRUE ~ ""),
+         direction=if_else(estimate>0, "pos","neg"),
+         abs_corr=abs(estimate), 
+         estimate=round(estimate, 3)) %>% 
+    # arrange(estimate)
+  select(ind, estimate, signif, direction, abs_corr) %>% 
+  filter(str_detect(ind, "motor|rural|exercise|infant|median|flu|sleep|inact|reading")) %>% 
+  mutate(ind=str_to_title(str_replace_all(ind, "_", " ")))
+  
+
+
+
+```
+
+
+
+```{r}
+
+library(ggtext)
+font_add_google("Ubuntu","ubuntu")
+
+basechart<-wifi_bars %>% 
+    ggplot() +
+      geom_col(aes(x=reorder(ind, abs_corr), y=abs_corr, fill=direction), width=0.9) + 
+      geom_text(aes(x=reorder(ind, abs_corr), y=abs_corr-0.04, 
+                    label=round(estimate, 3)), color="grey90") +
+      scale_fill_discrete_diverging() +
+      coord_flip(expand = FALSE)
+
+basechart
+
+basechart +
+  theme_minimal() +
+  theme(legend.position = "null",
+       plot.title.position = "plot",
+       plot.caption.position = "plot",
+       text=element_text(family="ubuntu"),
+        plot.background = element_rect(fill="ghostwhite",color=NA),
+        legend.background = element_rect(fill="ghostwhite",color=NA),
+        panel.background = element_rect(fill="ghostwhite", color=NA)) +
+  labs(y="Estimated Correlation Coefficient (Absolute)",
+       x="",
+       title="Correlated Factors of Broadband Usage in US Counties (2019)",
+       subtitle="Spearman Rank Correlation, Select Variables, p < 0.0001 ",
+       caption="Data: Microsoft | countyhealthrankings.org")
+
+
+
+```
+
+```{r}
+
+wifi_dots<-wifi_life %>% 
+  select(name, state_abbreviation, "fluvax"=flu_vaccinations_raw_value ,broadband_usage) %>% 
+  mutate(hlight=case_when(str_detect(name, "Travis") ~ "1",
+                          fluvax==max(fluvax, na.rm=T) ~"1",
+                          fluvax < 0.4 & broadband_usage>0.74 ~ "1",
+                          TRUE ~ "0"))
+wifi_dots %>% 
+  ggplot(aes(y=fluvax, x=broadband_usage, color=hlight)) +
+  geom_jitter(alpha=0.5) +
+    geom_smooth(method="loess",color="orange", fill="yellow2") +
+  scale_color_manual(values=c("grey50","blue")) +
+  ggrepel::geom_text_repel(
+    data = wifi_dots %>% filter(hlight=="1"),
+    aes(label = paste0(name, ", ",state_abbreviation)),
+    colour = "blue",
+    family="ubuntu",
+    min.segment.length = 0,
+    segment.colour = "blue"
+  ) +
+  # ylim(0,0.004) +
+  theme_minimal() +
+    theme(legend.position = "null",
+       plot.title.position = "plot",
+       plot.caption.position = "plot",
+       text=element_text(family="ubuntu"),
+        plot.background = element_rect(fill="ghostwhite",color=NA),
+        legend.background = element_rect(fill="ghostwhite",color=NA),
+        panel.background = element_rect(fill="ghostwhite", color=NA)) +
+  labs(y="Annual Flu Vaccinations, 2018 (%)",
+       x="Broadband Usage, 2019 (%)",
+       title="Is Broadband Usage Associated with Flu Vaccinations?",
+       subtitle=str_wrap("The share of a US county's free-for-service Medicare enrollees who receive annual flu vaccines is correlated with it's broadband usage, although there are notable outliers",75),
+       caption="Data: Microsoft | countyhealthrankings.org")
+
+
+
+```
+
+
+# Save Image
+
+Save your image for sharing. Be sure to use the `#TidyTuesday` hashtag in your post on twitter! 
+
+```{r}
+
+# This will save your most recent plot
+ggsave(
+  filename = "My TidyTuesday Plot.png",
+  device = "png")
+
+```
