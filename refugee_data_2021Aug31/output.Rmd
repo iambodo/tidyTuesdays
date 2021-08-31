@@ -1,0 +1,408 @@
+---
+title: "afghan_refugees"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(haven)
+# install.packages("showtext")
+library(showtext)
+
+
+dta<-haven::read_dta("https://www.refugeeresettlementdata.com/uploads/4/2/0/7/42073955/orr_prm_1975_2018_v1.dta")
+dta %>% colnames()
+
+dta %>% 
+  filter(citizenship_stable=="afghanistan") %>% 
+  summarise_all(~sum(is.na(.))) %>% 
+  t()
+
+dta %>% 
+  group_by(cs) %>% 
+  summarize(total=sum(refugees, na.rm=T)) %>% arrange(desc(total)) %>% head(20)
+```
+
+
+```{r}
+afg<-dta %>% 
+  filter(citizenship_stable=="afghanistan" & county_fips!="") %>% 
+  group_by(county10name, county_fips, state_fips) %>%
+  summarise(ref_total=sum(refugees, na.rm=T)) %>% 
+  arrange(desc(ref_total)) %>% 
+  mutate(fips=str_c(state_fips,county_fips))
+
+
+map_data <- usmap::countypop %>% 
+  left_join(afg, by=c("fips")) %>% 
+  mutate(ref_total=replace_na(ref_total, 0),
+         ref_pc=ref_total/pop_2015) %>% 
+  mutate(ref_total_na=if_else(ref_total==0, as.double(NA), ref_total))
+
+map_data %>% 
+  filter(str_detect(county, "Fairfax")) %>% 
+  arrange(desc(ref_pc))
+```
+
+
+```{r}
+dta %>% 
+  filter(citizenship_stable=="afghanistan") %>% 
+  group_by(year) %>% 
+  summarise(total=sum(refugees, na.rm = T)) %>%
+  ggplot(aes(x=year, y=total)) +
+  geom_line()
+```
+
+Compare with Iraq
+
+```{r}
+
+cs_compare<-dta %>% 
+  filter(citizenship_stable %in% c("afghanistan","iraq","syria")) %>% 
+  group_by(citizenship_stable, year) %>% 
+  summarise(total=sum(refugees, na.rm = T))
+
+#For text below
+cs_compare %>% 
+  group_by(citizenship_stable) %>% summarize(total=sum(total, na.rm=T))
+
+#Top cities for Iraqi?
+dta %>% 
+  filter(citizenship_stable=="iraq") %>% 
+  group_by(statefp10, city) %>% 
+  summarize(sum=sum(refugees)) %>% 
+  arrange(desc(sum))
+
+
+#line graph
+compare_line<-cs_compare %>% 
+    ggplot(aes(x=year, y=total, color=citizenship_stable)) +
+    geom_line() + 
+    scale_color_manual(values=c("afghanistan"="blue","iraq"="#cf0821","syria"="#02944B")) +
+    scale_y_continuous(labels = scales::comma) +
+    annotate("text", x=2020, y=19000, label=str_wrap("Iraq (177,425)",5), 
+             color="#cf0821", size=3, family="Manjari",) +
+    annotate("text", x=2020, y=14000, label=str_wrap("Syria (21,301)",6),
+             color="#02944B", size=3, family="Manjari",) +
+    annotate("text", x=2021, y=2000, label=str_wrap("Afghanistan (42,522)",15), 
+             color="blue", size=3, family="Manjari",) +
+    expand_limits(x=2026)
+
+compare_line
+
+compare_line<-compare_line +
+  theme_minimal() +
+  theme(legend.position="none",axis.title.y = element_blank()) +
+  theme(
+    text=element_text(family="Manjari", hjust=0.5)
+  ) +
+  labs(title = "Refugees Resettled in US 1980-2018", 
+       subtitle="By country of citizenship (sum in brackets)",
+           caption = "Data: Dreher et al (2020) via US Dept of State O.R.R. | Design: @1ambodo") 
+
+compare_line  
+
+ggsave("compare_line.png", 
+       compare_line,
+       width=6, height=4, dpi=300)
+```
+
+
+```{r}
+
+countries<-c("afghanistan","iraq") 
+
+ref_origin<-dta %>% 
+  rename("cs"=citizenship_stable) %>% 
+  filter(cs %in% countries & county_fips!="") %>% 
+  group_by(cs,county10name, county_fips, state_fips) %>%
+  summarise(ref_total=sum(refugees, na.rm=T)) %>% 
+  arrange(desc(ref_total)) %>% 
+  mutate(fips=str_c(state_fips,county_fips))
+
+
+usmap::countypop %>% filter(is.na(fips))
+
+map_data <- usmap::countypop %>% 
+  group_by(abbr) %>% mutate(statepop=sum(pop_2015,na.rm=T)) %>% ungroup() %>% 
+  left_join(ref_origin, by=c("fips")) %>% 
+  mutate(ref_total=replace_na(ref_total, 0),
+         ref_pc=ref_total/pop_2015) %>% 
+  mutate(ref_total_na=if_else(ref_total==0, as.double(NA), ref_total))
+
+
+#standardize percapita
+refnorm<-function(x){ (x-mean(x))/sd(x)}
+
+bins_data<-map_data %>% 
+  filter(!is.na(cs) & !is.na(abbr))  %>% 
+  group_by(cs, abbr) %>% 
+  summarize(sum=sum(ref_total,na.rm=T),
+            percap=sum/min(statepop)) %>% 
+  mutate(percap_sd_distance=refnorm(percap))
+  # mutate(percap_sd_distance=sd(percap)-percap)
+
+
+bins_data %>% 
+  slice_max(order_by=sum, n=15) %>%
+  arrange(-sum) %>% 
+  ggplot(aes(x=abbr,y=sum))+
+  geom_col()
+```
+
+## Start mapping...
+
+```{r}
+# install.packages("usmap")
+# install.packages("rgdal")
+# install.packages("maptools")
+
+library(rgdal)
+library(usmap) #import the package
+library(ggplot2) #use ggplot2 to add layer for visualization
+
+plot_usmap(regions = "states") + 
+  labs(title = "U.S. States",
+       subtitle = "This is a blank map of the United States.") + 
+  theme(panel.background=element_blank())
+
+cities_hl<-dta %>%
+  rename("cs"=citizenship_stable) %>% 
+  filter(cs=="afghanistan" & city!="") %>% 
+  group_by(city, county10name, state_fips, longitude, latitude) %>% 
+  summarize(sum=sum(refugees)) %>% arrange(desc(sum)) %>% head(20) %>% 
+  left_join(usmap::statepop, by=c("state_fips"="fips")) %>% 
+  filter(city %in% c("Phoenix","Fremont","New York", "Houston",
+                     "Alexandria","Decatur",
+                     "Boise City") | longitude==-117.1627728) #San Diego geocoded twice...
+
+cities_circ<-cities_hl %>% ungroup() %>%  
+    select(longitude,latitude) %>% 
+    as.data.frame() %>% 
+    usmap::usmap_transform() %>% 
+    inner_join(cities_hl, by=c("latitude","longitude")) %>% 
+    mutate(full=str_c(city,", ", abbr))
+
+
+
+
+afg_map<-plot_usmap(data = map_data %>% filter(cs=="afghanistan"), 
+               values = "ref_total_na", size=0.09, color="grey80") + 
+      scale_fill_continuous(low = "lightgrey", high = "blue", na.value="white",
+                            name = "Refugees Resettled", label = scales::comma) + 
+      geom_point(data = cities_circ,
+                 aes(x = longitude.1, y = latitude.1), size=7, shape=1,
+                     color = "green", fill=NA) +
+      ggrepel::geom_text_repel(data = cities_circ,
+                 aes(x = longitude.1, y = latitude.1, label = full), point.padding = 5,
+                 size = 3, alpha = 0.8) +
+      # labs(title = "Afghan Refugees Resettled 1980-2018", subtitle = "By County") +
+      theme(panel.background=element_blank()) +
+      theme(legend.position = "top") +
+      guides(fill = guide_colourbar(direction = "horizontal", title.position="top",
+                                    barwidth = 15, barheight = 0.5))
+
+afg_map
+# devtools::install_github("hrbrmstr/statebins")
+```
+
+DMV map
+
+```{r}
+
+fc<-dta %>% 
+  filter(county10name=="Falls Church") %>% 
+  head(1) %>% 
+  select(longitude, latitude,state_fips, city) %>% as.data.frame() %>% 
+      usmap::usmap_transform()
+
+
+
+va_map <-plot_usmap(data = map_data %>% filter(cs=="afghanistan"), region="state",
+                    include = c("VA","MD","DC"),
+                    values = "ref_total_na", size=0.5, color="grey80") +
+        scale_fill_continuous(low = "lightgrey", high = "blue", na.value="white",
+                            name = "Refugees Resettled", label = scales::comma) +
+      geom_point(data = fc,
+                 aes(x = longitude.1, y = latitude.1), size=5, stroke=2,shape=1, alpha=0.6,
+                     color = "green", fill=NA) +
+      # ggrepel::geom_text_repel(data = fc,
+      #            aes(x = longitude.1, y = latitude.1, label = city), point.padding = 5,
+      #            size = 3, alpha = 0.8) +
+      labs(title = " Afghan Refugees Resettled 1980-2018 in DC, Maryland, & Virginia counties", 
+           subtitle = str_wrap("   Highlighting Falls Church, VA (2015 pop = 13,892) which welcomed 169 Afghan refugees, the most per capita in US", 90),
+           caption = "Data: Dreher et al (2020) via US Dept of State O.R.R. | Design: @1ambodo") +
+       theme_void() +
+      theme(panel.background=element_blank()) +
+      theme(legend.position = "top",
+            text=element_text(family="Manjari"),
+            plot.title=element_text(face="bold", size=11, hjust=0.5),
+            plot.subtitle=element_text(size=8, hjust=0.5)) +
+      guides(fill = guide_colourbar(direction = "horizontal", barwidth = 15, barheight = 0.5))
+
+va_map
+
+ggsave("afghan_va.png", 
+       va_map,
+       width=6, height=8, dpi=300)
+
+
+
+# Not run 
+# dmv_top<-dta %>% 
+#   filter(state_fips %in% c("51","11","24") & county_fips!=".") %>% 
+#   group_by(state_fips,county_fips, citizenship_stable) %>% 
+#   summarize(sum=sum(refugees,na.rm=T))  %>% 
+#   group_by(state_fips, county_fips) %>% 
+#   slice_max(sum, n=1) %>% 
+#   # ungroup() %>% 
+#   # count(citizenship_stable) %>% 
+#   mutate(fips=str_c(state_fips,county_fips)) %>% 
+#   inner_join(usmap::countypop, by="fips") %>% 
+#   filter(str_detect(county, "Montgomery|George|District|Alexandria|Fairfax|Church|Arlington|Loudon|Prince G|Prince W|Charles"))
+# 
+# dmv_top
+# 
+# 
+# va_map2
+```
+
+
+State bins to compare Afghan and Iraq by pop density
+
+```{r}
+library(statebins)
+
+# bins_data<-map_data %>% 
+#   group_by(cs, abbr) %>% 
+#   summarize(sum=sum(ref_total_na,na.rm=T))
+#  
+
+statebins(bins_data %>%  filter(cs=="afghanistan") ,
+          state_col = "abbr",value_col = "percap_sd_distance", round=TRUE) +
+  labs(title="Afghan Refugees") +
+  theme_statebins("right") +
+  coord_equal()
+
+bins_data %>% 
+  slice_max(order_by=sum, n=10) %>%
+  arrange(-percap) %>% 
+  ggplot(aes(x=abbr,y=sum))+
+  geom_col()
+  
+
+#statebins map
+binmap<-ggplot(bins_data, aes(state=abbr, fill=percap_sd_distance)) +
+    geom_statebins() +
+    viridis::scale_fill_viridis(direction=1, option = "plasma", 
+                                breaks=c(-0.5,4),
+                                labels=c("Less Than Average",
+                                         "More Than Average")) +
+    coord_equal() +
+    facet_wrap(~cs, ncol=1) +
+    theme_statebins("top") +
+      theme(legend.position = "top",
+            title=element_text(hjust=0.5),
+            text=element_text(family="Manjari"),
+            legend.justification = "center") +
+      labs(title=str_wrap("Afghan & Iraqi Refugees Resettled in US States",30),
+           subtitle="1980-2018, Per Capita",
+           caption = str_wrap("Data: Dreher et al (2020) via US Dept of State O.R.R. | Design: @1ambodo",30)) +
+    guides(fill = guide_colourbar(direction = "horizontal", 
+                                  barwidth = 15, barheight = 0.5, title=""))
+  
+
+binmap
+
+ggsave("iraq_afg_statebin.png", 
+       binmap,
+       width=4, height=5, dpi=200)
+
+```
+
+
+
+```{r themes etc}
+
+library(ggtext)
+
+# install.packages("systemfonts")
+library(systemfonts)
+
+# systemfonts::system_fonts() %>% View()
+
+
+mytheme<-theme(
+      plot.title = element_markdown(size = 14, 
+                          hjust=0.5,
+                          family="Manjari",
+                          margin=margin(3,0,4,0),
+                          color="black",
+                          face = "bold"),
+      plot.subtitle = element_markdown(
+                          size=9,
+                          family="Manjari",
+                          hjust=0.5,
+                          color="black",
+                          lineheight = 1),
+      plot.caption = element_markdown(
+                          size=8,
+                          family="Manjari",
+                          hjust=1,
+                          color="black",
+                          lineheight = 1))
+
+
+
+
+cs_afg<-cs_compare %>% 
+    filter(citizenship_stable=="afghanistan")
+
+afg_line<-cs_afg %>% 
+  ggplot(aes(x=year, y=total, color=citizenship_stable)) +
+  geom_line() + 
+  scale_color_manual(values=c("afghanistan"="blue")) +
+  scale_y_continuous(labels = scales::comma) +
+    theme_minimal() +
+  labs(subtitle="Refugee Resettlements By Year") +
+  theme(legend.position="none",axis.title.y = element_blank())
+  
+
+#facts for chart title
+map_data %>% 
+  filter(ref_total != 0 & cs=="afghanistan") %>% 
+  summarize(sum=sum(ref_total),
+            counties=n())
+
+
+main_title<-plot_annotation(
+    title="Afghan Refugee Resettlements in US, 1980-2018",
+    subtitle="According to the US Dept of State's Office of Refugee Resettlement, <br> over 42,315 refugees of Afghan citizenship resettled in the US since 1980. <br> They first resided in 380 different counties across DC and 49 states (all but Montana). <br> This map highlights eight of the areas that welcomed the most Afghans to their communities.",
+    caption = "Data: Dreher, A., Langlotz, S., Matzat, J., Parsons, C. and Mayda, A. (2020). <br> Immigration, Political Ideologies and the Polarization of American Politics. <br> CEPR Discussion Paper 15587. <br> Design: @1ambodo",
+    theme=mytheme)
+
+dta %>% 
+  filter(citizenship_stable=="afghanistan") %>% 
+  filter(is.na(county_fips))
+  # count(state_fips) %>% View()
+
+final<-(afg_map / afg_line) + 
+  plot_layout(heights=c(4,1))
+
+twitter<-final + main_title
+
+
+ggsave("afghan_usmap.png", 
+       twitter,
+       width=6, height=8, dpi=300)
+
+```
+
+
